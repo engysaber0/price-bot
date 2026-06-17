@@ -9,12 +9,16 @@ jobs:
   run-bot:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install python-telegram-bot==20.7
+          pip install requests beautifulsoup4 lxml aiosqlite python-dotenv
+          pip install Pillow aiohttp APScheduler==3.10.4
+          pip install stripe fastapi uvicorn httpx==0.25.2
       - name: Run bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
