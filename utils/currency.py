@@ -42,7 +42,6 @@ _cache_time: float = 0
 CACHE_TTL = 6 * 3600  # 6 hours
 
 # Fallback rates when API is unreachable (1 EGP = X foreign currency)
-# Update these manually every few months
 FALLBACK_RATES = {
     "EGP": 1.0,
     "USD": 0.0204,   # 1 USD ≈ 49 EGP
@@ -80,7 +79,7 @@ async def _refresh_rates():
         if rates:
             _rate_cache = rates
             _cache_time = time.time()
-            logger.info("Exchange rates refreshed from API.")
+            logger.info(f"Exchange rates refreshed from API. USD rate: {rates.get('USD')}")
     except Exception as e:
         logger.warning(f"Exchange rate fetch failed: {e} — using fallback rates")
         _rate_cache = FALLBACK_RATES
@@ -110,12 +109,12 @@ async def convert_price(amount: float, from_currency: str, to_currency: str) -> 
     if not _rate_cache or (time.time() - _cache_time) > CACHE_TTL:
         await _refresh_rates()
 
-    if not _rate_cache:
-        # Should never reach here since _refresh_rates always sets fallback
-        return None
+    logger.info(f"Converting {amount} {from_currency} -> {to_currency}, cache size: {len(_rate_cache)}")
 
     rate_from = 1.0 if from_currency == "EGP" else _rate_cache.get(from_currency)
     rate_to = 1.0 if to_currency == "EGP" else _rate_cache.get(to_currency)
+
+    logger.info(f"rate_from={rate_from}, rate_to={rate_to}")
 
     if rate_from is None or rate_to is None:
         logger.warning(f"Missing rate for {from_currency} or {to_currency}")
