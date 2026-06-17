@@ -64,8 +64,12 @@ async def handle_price_search(update, context, query: str):
         )
         return
 
-    # Read currency from user's message first, fallback to profile
-    user_currency = await get_user_currency(user_id)
+    # Default to EGP for Arabic/Egyptian users
+    # Only use DB currency if it's not USD (USD is usually wrong for Arab users)
+    db_currency = await get_user_currency(user_id)
+    user_currency = db_currency if (db_currency and db_currency != "USD") else "EGP"
+
+    # Override with currency mentioned in the query
     currency_map = {
         "جنيه": "EGP", "pounds": "EGP", "egp": "EGP",
         "دولار": "USD", "dollar": "USD", "usd": "USD",
@@ -190,7 +194,8 @@ async def handle_smart_agent(update, context, text: str):
 
     msg = await update.message.reply_text("🤖 الوكيل الذكي يحلل طلبك...")
 
-    user_currency = await get_user_currency(user_id)
+    db_currency = await get_user_currency(user_id)
+    user_currency = db_currency if (db_currency and db_currency != "USD") else "EGP"
 
     budget_match = re.search(r"(\d[\d,\.]*)\s*(دولار|جنيه|ريال|\$|USD|EGP|SAR)?", text, re.IGNORECASE)
     budget = float(budget_match.group(1).replace(",", "")) if budget_match else None
