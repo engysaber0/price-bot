@@ -1,6 +1,7 @@
 """
 Handles all text messages — routes based on user conversation state.
 """
+import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from utils.database import (
@@ -64,10 +65,40 @@ async def handle_price_search(update, context, query: str):
         )
         return
 
-    # Convert all prices into the user's detected currency for a fair comparison
+    # Read currency from user's message first, fallback to profile
     user_currency = await get_user_currency(user_id)
+    currency_map = {
+        "جنيه": "EGP", "pounds": "EGP", "egp": "EGP",
+        "دولار": "USD", "dollar": "USD", "usd": "USD",
+        "ريال": "SAR", "sar": "SAR",
+        "درهم": "AED", "aed": "AED",
+    }
+    query_lower = query.lower()
+    for keyword, code in currency_map.items():
+        if keyword in query_lower:
+            user_currency = code
+            break
+
+    # Extract budget if mentioned (must be paired with a currency word)
+    budget_match = re.search(
+        r"(\d[\d,]*)\s*(جنيه|دولار|ريال|درهم|egp|usd|sar|aed)"
+        r"|(بـ|بسعر|أقل من|تحت)\s*(\d[\d,]*)",
+        query_lower
+    )
+    budget_limit = None
+    if budget_match:
+        num = budget_match.group(1) or budget_match.group(4)
+        if num:
+            budget_limit = float(num.replace(",", ""))
+
+    # Convert first, then filter — order matters
     from utils.currency import convert_results_to_currency
     results = await convert_results_to_currency(results, user_currency)
+
+    if budget_limit:
+        filtered = [r for r in results if 0 < r.get("price", 0) <= budget_limit]
+        if filtered:
+            results = filtered
 
     display_currency = results[0].get("display_currency", user_currency) if results else user_currency
     text = format_price_results(results, currency=display_currency)
@@ -162,7 +193,6 @@ async def handle_smart_agent(update, context, text: str):
     user_currency = await get_user_currency(user_id)
 
     # Extract budget + intent
-    import re
     budget_match = re.search(r"(\d[\d,\.]*)\s*(دولار|جنيه|ريال|\$|USD|EGP|SAR)?", text, re.IGNORECASE)
     budget = float(budget_match.group(1).replace(",", "")) if budget_match else None
     # If user didn't specify a currency word, assume their detected currency
