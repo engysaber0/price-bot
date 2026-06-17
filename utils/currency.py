@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 # language_code -> (currency_code, country_name_ar)
 LANG_TO_CURRENCY = {
-    "ar": ("EGP", "مصر"),      # default Arabic -> Egypt (bot's primary market)
+    "ar": ("EGP", "مصر"),
     "en": ("USD", "أمريكا"),
     "fr": ("EUR", "فرنسا"),
     "de": ("EUR", "ألمانيا"),
@@ -23,7 +23,6 @@ LANG_TO_CURRENCY = {
     "tr": ("TRY", "تركيا"),
 }
 
-# More specific overrides if Telegram gives a region-tagged code, e.g. "ar-SA"
 REGION_OVERRIDES = {
     "ar-eg": ("EGP", "مصر"),
     "ar-sa": ("SAR", "السعودية"),
@@ -42,25 +41,36 @@ _rate_cache: dict = {}
 _cache_time: float = 0
 CACHE_TTL = 6 * 3600  # 6 hours
 
+# Fallback rates when API is unreachable (1 EGP = X foreign currency)
+# Update these manually every few months
+FALLBACK_RATES = {
+    "EGP": 1.0,
+    "USD": 0.0204,   # 1 USD ≈ 49 EGP
+    "EUR": 0.0187,   # 1 EUR ≈ 53 EGP
+    "GBP": 0.0161,   # 1 GBP ≈ 62 EGP
+    "SAR": 0.0765,   # 1 SAR ≈ 13 EGP
+    "AED": 0.0749,   # 1 AED ≈ 13.3 EGP
+    "KWD": 0.0063,
+    "QAR": 0.0743,
+    "JOD": 0.0145,
+    "MAD": 0.204,
+    "TRY": 0.67,
+    "RUB": 1.88,
+}
+
 
 def detect_currency_from_user(telegram_user) -> tuple[str, str]:
-    """
-    telegram_user: telegram.User object (has .language_code)
-    Returns (currency_code, country_name_ar)
-    """
     code = (getattr(telegram_user, "language_code", None) or "").lower()
     if not code:
         return DEFAULT_CURRENCY
-
     if code in REGION_OVERRIDES:
         return REGION_OVERRIDES[code]
-
     base = code.split("-")[0]
     return LANG_TO_CURRENCY.get(base, DEFAULT_CURRENCY)
 
 
 async def _refresh_rates():
-    """Fetch latest rates with EGP as base, cache them."""
+    """Fetch latest rates with EGP as base, cache them. Fall back to hardcoded rates if API fails."""
     global _rate_cache, _cache_time
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -70,8 +80,11 @@ async def _refresh_rates():
         if rates:
             _rate_cache = rates
             _cache_time = time.time()
+            logger.info("Exchange rates refreshed from API.")
     except Exception as e:
-        logger.warning(f"Exchange rate fetch failed: {e}")
+        logger.warning(f"Exchange rate fetch failed: {e} — using fallback rates")
+        _rate_cache = FALLBACK_RATES
+        _cache_time = time.time()
 
 
 async def get_rate_egp_to(target_currency: str) -> float | None:
@@ -98,12 +111,14 @@ async def convert_price(amount: float, from_currency: str, to_currency: str) -> 
         await _refresh_rates()
 
     if not _rate_cache:
-        return None  # API unreachable, caller should fall back to original currency
+        # Should never reach here since _refresh_rates always sets fallback
+        return None
 
     rate_from = 1.0 if from_currency == "EGP" else _rate_cache.get(from_currency)
     rate_to = 1.0 if to_currency == "EGP" else _rate_cache.get(to_currency)
 
     if rate_from is None or rate_to is None:
+        logger.warning(f"Missing rate for {from_currency} or {to_currency}")
         return None
 
     amount_in_egp = amount / rate_from
@@ -130,7 +145,6 @@ async def convert_results_to_currency(results: list[dict], target_currency: str)
 
         new_price = await convert_price(price, src_currency, target_currency)
         if new_price is None:
-            # Conversion unavailable -> keep original currency, mark it clearly
             item["display_currency"] = src_currency
         else:
             item["original_price"] = price
