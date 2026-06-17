@@ -306,7 +306,6 @@ ACCESSORY_KEYWORDS = [
 
 
 def _filter_relevant(results: list, query: str) -> list:
-    query_words = set(query.lower().split())
     filtered = []
     for r in results:
         if r.get("price", 0) <= 0:
@@ -318,14 +317,6 @@ def _filter_relevant(results: list, query: str) -> list:
 
         if is_accessory:
             logger.info(f"Filtered out likely accessory: {r.get('name', '')[:50]}")
-            continue
-
-        # فلتر المنتجات الرخيصة جداً
-        price = r.get("price", 0)
-        currency = r.get("currency", "USD")
-        min_price = 3 if currency == "USD" else 50
-        if price < min_price:
-            logger.info(f"Filtered out suspiciously cheap: {r.get('name', '')[:50]} at {price} {currency}")
             continue
 
         filtered.append(r)
