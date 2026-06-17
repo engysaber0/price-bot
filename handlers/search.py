@@ -2,6 +2,7 @@
 Handles all text messages — routes based on user conversation state.
 """
 import re
+import time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from utils.database import (
@@ -37,14 +38,12 @@ async def search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_fake_detect_text(update, context, text)
         return
 
-    # Default: price comparison search
     await handle_price_search(update, context, text)
 
 
 async def handle_price_search(update, context, query: str):
     user_id = update.effective_user.id
 
-    # Check limits
     allowed, reason = await can_search(user_id)
     if not allowed:
         await update.message.reply_text(
@@ -79,7 +78,7 @@ async def handle_price_search(update, context, query: str):
             user_currency = code
             break
 
-    # Extract budget if mentioned (must be paired with a currency word)
+    # Extract budget if mentioned
     budget_match = re.search(
         r"(\d[\d,]*)\s*(جنيه|دولار|ريال|درهم|egp|usd|sar|aed)"
         r"|(بـ|بسعر|أقل من|تحت)\s*(\d[\d,]*)",
@@ -91,7 +90,13 @@ async def handle_price_search(update, context, query: str):
         if num:
             budget_limit = float(num.replace(",", ""))
 
-    # Convert first, then filter — order matters
+    # Force fallback rates if cache is empty
+    import utils.currency as _cur
+    if not _cur._rate_cache:
+        _cur._rate_cache = _cur.FALLBACK_RATES
+        _cur._cache_time = time.time()
+
+    # Convert first, then filter
     from utils.currency import convert_results_to_currency
     results = await convert_results_to_currency(results, user_currency)
 
@@ -103,13 +108,8 @@ async def handle_price_search(update, context, query: str):
     display_currency = results[0].get("display_currency", user_currency) if results else user_currency
     text = format_price_results(results, currency=display_currency)
 
-    # Build alert button for best result
     best = results[0]
 
-    # callback_data has a hard 64-byte limit in Telegram, and Arabic text
-    # easily exceeds that in UTF-8 (multiple bytes per character). Store the
-    # actual alert details in user_data and reference them by a short index
-    # instead of cramming the product name into callback_data.
     pending_alerts = context.user_data.setdefault("pending_alerts", {})
     alert_idx = str(len(pending_alerts))
     pending_alerts[alert_idx] = {
@@ -192,10 +192,8 @@ async def handle_smart_agent(update, context, text: str):
 
     user_currency = await get_user_currency(user_id)
 
-    # Extract budget + intent
     budget_match = re.search(r"(\d[\d,\.]*)\s*(دولار|جنيه|ريال|\$|USD|EGP|SAR)?", text, re.IGNORECASE)
     budget = float(budget_match.group(1).replace(",", "")) if budget_match else None
-    # If user didn't specify a currency word, assume their detected currency
     budget_currency = (budget_match.group(2) or user_currency) if budget_match else user_currency
     budget_currency = {"دولار": "USD", "جنيه": "EGP", "ريال": "SAR", "$": "USD"}.get(
         budget_currency, budget_currency
@@ -209,11 +207,15 @@ async def handle_smart_agent(update, context, text: str):
         await msg.edit_text("❌ لم أجد منتجات مناسبة. جرب وصفاً مختلفاً.")
         return
 
-    # Convert every result into the budget's currency so comparison is apples-to-apples
+    # Force fallback rates if cache is empty
+    import utils.currency as _cur
+    if not _cur._rate_cache:
+        _cur._rate_cache = _cur.FALLBACK_RATES
+        _cur._cache_time = time.time()
+
     from utils.currency import convert_results_to_currency
     results = await convert_results_to_currency(results, budget_currency)
 
-    # Filter by budget if detected (now safe since everything's in the same currency)
     if budget:
         filtered = [r for r in results if r.get("price", 0) > 0 and r["price"] <= budget]
         if filtered:
@@ -226,7 +228,6 @@ async def handle_smart_agent(update, context, text: str):
         )
         return
 
-    # Sort by value score: rating / price
     priced_results.sort(key=lambda r: (r.get("rating", 0) / max(r.get("price", 1), 1)), reverse=True)
 
     best = priced_results[0]
